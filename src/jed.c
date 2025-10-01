@@ -29,6 +29,7 @@ void die(const char *s) {
 }
 
 void disable_raw_mode() {
+    free_lines();  // Add this line
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios);
     write(STDOUT_FILENO, "\x1b[2J", 4);
     write(STDOUT_FILENO, "\x1b[H", 3);
@@ -80,16 +81,30 @@ int read_key() {
 }
 
 // ================= file I/O =================
+void free_lines() {
+    for (int i = 0; i < num_lines; i++) {
+        free(lines[i]);
+        lines[i] = NULL;
+    }
+    num_lines = 0;
+}
+
 void open_file(const char *filename) {
+    // Free existing lines first
+    free_lines();
+
     FILE *f = fopen(filename, "r");
     if (!f) return;
 
     strncpy(current_filename, filename, sizeof(current_filename)-1);
 
     char buffer[MAX_COLS];
-    while (fgets(buffer, sizeof(buffer), f)) {
+    while (fgets(buffer, sizeof(buffer), f) && num_lines < MAX_LINES) {
         lines[num_lines] = calloc(MAX_COLS, sizeof(char));
-        if (!lines[num_lines]) die("calloc");
+        if (!lines[num_lines]) {
+            fclose(f);
+            die("calloc");
+        }
         strncpy(lines[num_lines], buffer, MAX_COLS-1);
 
         size_t len = strlen(lines[num_lines]);
@@ -111,15 +126,36 @@ void save_file(const char *filename) {
 }
 
 // ================= text editing =================
+int is_valid_line(int line) {
+    return (line >= 0 && line < num_lines && lines[line] != NULL);
+}
+
 void insert_char(int line, int col, char c) {
-    if (line >= num_lines) return;
+    if (!is_valid_line(line)) return;
+    if (col < 0 || col >= MAX_COLS - 1) return;
+    
     int len = strlen(lines[line]);
-    if (len+1 >= MAX_COLS) return;
-    for (int i=len; i>=col; i--) lines[line][i+1] = lines[line][i];
+    if (len >= MAX_COLS - 1) return;  // Ensure space for new char + null terminator
+    
+    // Move characters only if we're not at the end
+    if (col <= len) {
+        for (int i = len; i >= col; i--) {
+            lines[line][i + 1] = lines[line][i];
+        }
+    } else {
+        // If inserting beyond current length, pad with spaces
+        for (int i = len; i < col; i++) {
+            lines[line][i] = ' ';
+        }
+        lines[line][col + 1] = '\0';
+    }
+    
     lines[line][col] = c;
+    lines[line][MAX_COLS - 1] = '\0';  // Ensure null termination
 }
 
 void delete_char(int line, int col) {
+    if (!is_valid_line(line)) return;
     int len = strlen(lines[line]);
     if (col >= len) return;
     for (int i=col; i<len; i++) lines[line][i] = lines[line][i+1];
@@ -227,26 +263,66 @@ void refresh_screen() {
 // ================= Input Handlers =================
 void handle_insert(int c) {
     if (c==27) { mode=NORMAL; }
-    else if (c==1000) { if (cy>0) cy--; cx= cx>strlen(lines[cy])?strlen(lines[cy]):cx; }
-    else if (c==1001) { if (cy<num_lines-1) cy++; cx= cx>strlen(lines[cy])?strlen(lines[cy]):cx; }
-    else if (c==1002) { if (cx<strlen(lines[cy])) cx++; }
+    else if (c==1000) { 
+        if (cy > 0) { 
+            cy--; 
+            cx = is_valid_line(cy) ? 
+                 (cx > strlen(lines[cy]) ? strlen(lines[cy]) : cx) : 0;
+        }
+    }
+    else if (c==1001) { 
+        if (cy < num_lines-1) { 
+            cy++; 
+            cx = is_valid_line(cy) ? 
+                 (cx > strlen(lines[cy]) ? strlen(lines[cy]) : cx) : 0;
+        }
+    }
+    else if (c==1002) { 
+        if (is_valid_line(cy) && cx < strlen(lines[cy])) cx++; 
+    }
     else if (c==1003) { if (cx>0) cx--; }
-    else if (c==1004) { // Delete key: remove character under cursor
-        if (cx < (int)strlen(lines[cy])) delete_char(cy, cx);
+    else if (c==1004) { 
+        if (is_valid_line(cy) && cx < (int)strlen(lines[cy])) 
+            delete_char(cy, cx);
     }
     else if (c=='\r') { insert_line(cy+1); cx=0; cy++; }
-    else if (c==127 || c=='\b') { if (cx>0) { delete_char(cy,cx-1); cx--; } }
-    else if (c>=32 && c<=126) { insert_char(cy,cx,c); cx++; }
+    else if (c==127 || c=='\b') { 
+        if (cx>0 && is_valid_line(cy)) { 
+            delete_char(cy,cx-1); 
+            cx--; 
+        }
+    }
+    else if (c>=32 && c<=126) { 
+        if (is_valid_line(cy)) {
+            insert_char(cy,cx,c); 
+            cx++;
+        }
+    }
 }
 
 void handle_normal(int c) {
     if (c==':') { mode=COMMAND; return; }
-    else if (c==1000) { if (cy>0) cy--; cx= cx>strlen(lines[cy])?strlen(lines[cy]):cx; }
-    else if (c==1001) { if (cy<num_lines-1) cy++; cx= cx>strlen(lines[cy])?strlen(lines[cy]):cx; }
-    else if (c==1002) { if (cx<strlen(lines[cy])) cx++; }
+    else if (c==1000) { 
+        if (cy > 0) { 
+            cy--; 
+            cx = is_valid_line(cy) ? 
+                 (cx > strlen(lines[cy]) ? strlen(lines[cy]) : cx) : 0;
+        }
+    }
+    else if (c==1001) { 
+        if (cy < num_lines-1) { 
+            cy++; 
+            cx = is_valid_line(cy) ? 
+                 (cx > strlen(lines[cy]) ? strlen(lines[cy]) : cx) : 0;
+        }
+    }
+    else if (c==1002) { 
+        if (is_valid_line(cy) && cx < strlen(lines[cy])) cx++; 
+    }
     else if (c==1003) { if (cx>0) cx--; }
-    else if (c==1004) { // Delete key in normal mode: delete char under cursor
-        if (cx < (int)strlen(lines[cy])) delete_char(cy, cx);
+    else if (c==1004) { 
+        if (is_valid_line(cy) && cx < (int)strlen(lines[cy])) 
+            delete_char(cy, cx);
     }
     else if (c=='i') { mode=INSERT; }
 }
@@ -282,5 +358,5 @@ void handle_command() {
     else if (strcmp(cmd,"w")==0) save_file(current_filename);
     else if (strcmp(cmd,"wq")==0) { save_file(current_filename); exit(0); }
 
-    mode=NORMAL;
+    mode = NORMAL;
 }
