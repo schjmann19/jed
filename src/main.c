@@ -11,14 +11,9 @@ int main(int argc, char **argv)
 
     while ((opt = getopt_long(argc, argv, "hv", longopts, NULL)) != -1) {
         switch (opt) {
-            case 'h':
-                help();
-                return 0;
-            case 'v':
-                ver();
-                return 0;
-            default:
-                bad_arg();
+            case 'h': help(); return 0;
+            case 'v': ver(); return 0;
+            default: bad_arg();
         }
     }
 
@@ -29,10 +24,7 @@ int main(int argc, char **argv)
 
     while (1) {
         // if entering command mode, handle it immediately
-        if (mode==COMMAND) {
-            handle_command();
-            continue;
-        }
+        if (mode==COMMAND) { handle_command(); continue; }
 
         // ensure viewport follows cursor before rendering
         scroll();
