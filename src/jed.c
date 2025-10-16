@@ -1,7 +1,12 @@
 #include "aux.c"
+#include <string.h>
 
 #define MAX_LINES 10000
 #define MAX_COLS 1024
+
+// Function prototypes
+void free_lines(void);
+void die(const char *s);
 
 // Global text storage
 char *lines[MAX_LINES];
@@ -22,7 +27,16 @@ char current_filename[256] = "out.txt";
 // Terminal settings
 struct termios orig_termios;
 
-// ================= Terminal Handling =================
+// Move free_lines implementation here, before it's first used
+void free_lines() {
+    for (int i = 0; i < num_lines; i++) {
+        free(lines[i]);
+        lines[i] = NULL;
+    }
+    num_lines = 0;
+}
+
+/* ================= Terminal Handling ================= */
 void die(const char *s) {
     perror(s);
     exit(1);
@@ -81,14 +95,6 @@ int read_key() {
 }
 
 // ================= file I/O =================
-void free_lines() {
-    for (int i = 0; i < num_lines; i++) {
-        free(lines[i]);
-        lines[i] = NULL;
-    }
-    num_lines = 0;
-}
-
 void open_file(const char *filename) {
     // Free existing lines first
     free_lines();
@@ -331,7 +337,7 @@ void handle_command() {
     int rows, cols;
     get_window_size(&rows,&cols);
 
-    char cmd[64];
+    char cmd[256]; // Increased buffer size to handle filename
     int i=0;
 
     // move to last row and show colon
@@ -354,9 +360,25 @@ void handle_command() {
     // restore raw
     enable_raw_mode();
 
-    if (strcmp(cmd,"q")==0) exit(0);
-    else if (strcmp(cmd,"w")==0) save_file(current_filename);
-    else if (strcmp(cmd,"wq")==0) { save_file(current_filename); exit(0); }
+    // Parse command and optional filename
+    char command[32] = {0};
+    char filename[224] = {0};
+    sscanf(cmd, "%s %s", command, filename);
+
+    if (strcmp(command,"q")==0) exit(0);
+    else if (strcmp(command,"w")==0) {
+        if (filename[0] != '\0') {
+            strncpy(current_filename, filename, sizeof(current_filename)-1);
+        }
+        save_file(current_filename);
+    }
+    else if (strcmp(command,"wq")==0) { 
+        if (filename[0] != '\0') {
+            strncpy(current_filename, filename, sizeof(current_filename)-1);
+        }
+        save_file(current_filename);
+        exit(0);
+    }
 
     mode = NORMAL;
 }

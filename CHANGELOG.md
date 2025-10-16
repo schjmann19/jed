@@ -14,3 +14,10 @@ All notable changes to this project will be documented in this file.
 - Memory leak in open_file()
 - Buffer overflow risk in insert_char()
 - Null pointer dereference risks
+
+## [0.1.1]
+### Added
+- Implicit file making (can just open the editor and :wq with a new filename and it will create it.)
+
+### Fixed
+- Style and proxility in jed.c
