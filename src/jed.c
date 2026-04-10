@@ -1,30 +1,29 @@
-#include "aux.c"
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <termios.h>
+#include <sys/ioctl.h>
+#include <sys/types.h>
+#include "jed.h"
 
-#define MAX_LINES 10000
-#define MAX_COLS 1024
-
-// Function prototypes
-void free_lines(void);
-void die(const char *s);
-
-// Global text storage
+/* Global text storage */
 char *lines[MAX_LINES];
 int num_lines = 0;
 
-// Cursor position
+/* Cursor position */
 int cx = 0, cy = 0;
-// Viewport offsets
+
+/* Viewport offsets */
 int row_offset = 0, col_offset = 0;
 
-// Editor modes
-typedef enum { NORMAL, INSERT, COMMAND } Mode;
+/* Editor modes */
 Mode mode = NORMAL;
 
-// Current file name
+/* Current file name */
 char current_filename[256] = "out.txt";
 
-// Terminal settings
+/* Terminal settings */
 struct termios orig_termios;
 
 // Move free_lines implementation here, before it's first used

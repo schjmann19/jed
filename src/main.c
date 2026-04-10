@@ -1,4 +1,7 @@
-#include "jed.c"
+#include <getopt.h>
+#include <stdlib.h>
+#include "jed.h"
+#include "aux.h"
 
 int main(int argc, char **argv) 
 {
@@ -22,7 +25,7 @@ int main(int argc, char **argv)
     if (optind < argc) open_file(argv[optind]);
     if (num_lines == 0) insert_line(0);
 
-    while (1) {
+    loop {
         // if entering command mode, handle it immediately
         if (mode==COMMAND) { handle_command(); continue; }
 

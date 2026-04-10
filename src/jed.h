@@ -1,0 +1,62 @@
+#ifndef JED_H
+#define JED_H
+
+#include <termios.h>
+
+#define MAX_LINES 10000
+#define MAX_COLS 1024
+#define loop for(;;)
+
+/* Editor modes */
+typedef enum { NORMAL, INSERT, COMMAND } Mode;
+
+/* Global text storage */
+extern char *lines[MAX_LINES];
+extern int num_lines;
+
+/* Cursor position */
+extern int cx, cy;
+
+/* Viewport offsets */
+extern int row_offset, col_offset;
+
+/* Editor mode */
+extern Mode mode;
+
+/* Current file name */
+extern char current_filename[256];
+
+/* Terminal settings */
+extern struct termios orig_termios;
+
+/* Terminal handling */
+void die(const char *s);
+void enable_raw_mode(void);
+void disable_raw_mode(void);
+void free_lines(void);
+
+/* Key input */
+int read_key(void);
+
+/* File I/O */
+void open_file(const char *filename);
+void save_file(const char *filename);
+
+/* Text editing */
+int is_valid_line(int line);
+void insert_char(int line, int col, char c);
+void delete_char(int line, int col);
+void insert_line(int index);
+void delete_line(int index);
+
+/* Screen rendering */
+void get_window_size(int *rows, int *cols);
+void scroll(void);
+void refresh_screen(void);
+
+/* Input handlers */
+void handle_insert(int c);
+void handle_normal(int c);
+void handle_command(void);
+
+#endif /* JED_H */
