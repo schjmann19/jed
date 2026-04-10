@@ -2,13 +2,15 @@
 #include <stdlib.h>
 #include "aux.h"
 
+#define VERSION "0.2.0"
+
 void bad_arg(void) {
     fprintf(stderr, "bad argument\n use -h or --help for help\n");
     exit(1);
 }
 
 void ver(void) {
-    printf("jed version 0.1\n");
+    printf("jed version %s\n", VERSION);
     printf("by Jimena Neumann (schjmann19@gmail.com)\n");
 }
 

@@ -19,12 +19,14 @@ int row_offset = 0, col_offset = 0;
 
 /* Editor modes */
 Mode mode = NORMAL;
+int last_normal_cmd = 0;
 
 /* Current file name */
 char current_filename[256] = "out.txt";
 
 /* Terminal settings */
 struct termios orig_termios;
+static int raw_mode_initialized = 0;
 
 // Move free_lines implementation here, before it's first used
 void free_lines() {
@@ -50,7 +52,10 @@ void disable_raw_mode() {
 
 void enable_raw_mode() {
     if (tcgetattr(STDIN_FILENO, &orig_termios) == -1) die("tcgetattr");
-    atexit(disable_raw_mode);
+    if (!raw_mode_initialized) {
+        atexit(disable_raw_mode);
+        raw_mode_initialized = 1;
+    }
     struct termios raw = orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON | ISIG);
     raw.c_iflag &= ~(IXON | ICRNL);
@@ -102,6 +107,7 @@ void open_file(const char *filename) {
     if (!f) return;
 
     strncpy(current_filename, filename, sizeof(current_filename)-1);
+    current_filename[sizeof(current_filename)-1] = '\0';
 
     char buffer[MAX_COLS];
     while (fgets(buffer, sizeof(buffer), f) && num_lines < MAX_LINES) {
@@ -175,9 +181,14 @@ void insert_line(int index) {
 }
 
 void delete_line(int index) {
+    if (!is_valid_line(index)) return;
     free(lines[index]);
     for (int i=index; i<num_lines-1; i++) lines[i] = lines[i+1];
     num_lines--;
+    if (num_lines >= 0 && num_lines < MAX_LINES) lines[num_lines] = NULL;
+    if (cy >= num_lines) cy = num_lines - 1;
+    if (cy < 0) cy = 0;
+    if (is_valid_line(cy) && cx > (int)strlen(lines[cy])) cx = (int)strlen(lines[cy]);
 }
 
 // ================= screen =================
@@ -241,7 +252,7 @@ void refresh_screen() {
     }
 
     // status line second to last
-    char status[256];
+    char status[512];
     snprintf(status, sizeof(status), "-- %s --   %s",
              (mode==INSERT)?"INSERT":(mode==COMMAND)?"COMMAND":"NORMAL",
              current_filename);
@@ -268,68 +279,140 @@ void refresh_screen() {
 // ================= Input Handlers =================
 void handle_insert(int c) {
     if (c==27) { mode=NORMAL; }
-    else if (c==1000) { 
-        if (cy > 0) { 
-            cy--; 
-            cx = is_valid_line(cy) ? 
-                 (cx > strlen(lines[cy]) ? strlen(lines[cy]) : cx) : 0;
+    else if (c==1000) {
+        if (cy > 0) {
+            cy--;
+            if (is_valid_line(cy)) {
+                int len = (int)strlen(lines[cy]);
+                if (cx > len) cx = len;
+            } else {
+                cx = 0;
+            }
         }
     }
-    else if (c==1001) { 
-        if (cy < num_lines-1) { 
-            cy++; 
-            cx = is_valid_line(cy) ? 
-                 (cx > strlen(lines[cy]) ? strlen(lines[cy]) : cx) : 0;
+    else if (c==1001) {
+        if (cy < num_lines-1) {
+            cy++;
+            if (is_valid_line(cy)) {
+                int len = (int)strlen(lines[cy]);
+                if (cx > len) cx = len;
+            } else {
+                cx = 0;
+            }
         }
     }
-    else if (c==1002) { 
-        if (is_valid_line(cy) && cx < strlen(lines[cy])) cx++; 
+    else if (c==1002) {
+        if (is_valid_line(cy)) {
+            int len = (int)strlen(lines[cy]);
+            if (cx < len) cx++;
+        }
     }
     else if (c==1003) { if (cx>0) cx--; }
-    else if (c==1004) { 
-        if (is_valid_line(cy) && cx < (int)strlen(lines[cy])) 
-            delete_char(cy, cx);
-    }
-    else if (c=='\r') { insert_line(cy+1); cx=0; cy++; }
-    else if (c==127 || c=='\b') { 
-        if (cx>0 && is_valid_line(cy)) { 
-            delete_char(cy,cx-1); 
-            cx--; 
+    else if (c==1004) {
+        if (is_valid_line(cy)) {
+            int len = (int)strlen(lines[cy]);
+            if (cx < len) delete_char(cy, cx);
         }
     }
-    else if (c>=32 && c<=126) { 
+    else if (c=='\r') { insert_line(cy+1); cx = 0; cy++; }
+    else if (c==127 || c=='\b') {
+        if (cx>0 && is_valid_line(cy)) {
+            delete_char(cy, cx-1);
+            cx--;
+        }
+    }
+    else if (c>=32 && c<=126) {
         if (is_valid_line(cy)) {
-            insert_char(cy,cx,c); 
+            insert_char(cy, cx, c);
             cx++;
         }
     }
 }
 
 void handle_normal(int c) {
-    if (c==':') { mode=COMMAND; return; }
-    else if (c==1000) { 
-        if (cy > 0) { 
-            cy--; 
-            cx = is_valid_line(cy) ? 
-                 (cx > strlen(lines[cy]) ? strlen(lines[cy]) : cx) : 0;
+    if (c==':') { mode = COMMAND; last_normal_cmd = 0; return; }
+    else if (c=='h' || c==1003) {
+        if (cx > 0) cx--;
+        last_normal_cmd = 0;
+    }
+    else if (c=='j' || c==1001) {
+        if (cy < num_lines-1) {
+            cy++;
+            if (is_valid_line(cy)) {
+                int len = (int)strlen(lines[cy]);
+                if (cx > len) cx = len;
+            } else {
+                cx = 0;
+            }
+        }
+        last_normal_cmd = 0;
+    }
+    else if (c=='k' || c==1000) {
+        if (cy > 0) {
+            cy--;
+            if (is_valid_line(cy)) {
+                int len = (int)strlen(lines[cy]);
+                if (cx > len) cx = len;
+            } else {
+                cx = 0;
+            }
+        }
+        last_normal_cmd = 0;
+    }
+    else if (c=='l' || c==1002) {
+        if (is_valid_line(cy)) {
+            int len = (int)strlen(lines[cy]);
+            if (cx < len) cx++;
+        }
+        last_normal_cmd = 0;
+    }
+    else if (c=='0') {
+        cx = 0;
+        last_normal_cmd = 0;
+    }
+    else if (c=='$') {
+        if (is_valid_line(cy)) cx = (int)strlen(lines[cy]);
+        last_normal_cmd = 0;
+    }
+    else if (c=='x') {
+        if (is_valid_line(cy)) {
+            int len = (int)strlen(lines[cy]);
+            if (cx < len) delete_char(cy, cx);
+        }
+        last_normal_cmd = 0;
+    }
+    else if (c=='d') {
+        if (last_normal_cmd == 'd') {
+            delete_line(cy);
+            last_normal_cmd = 0;
+        } else {
+            last_normal_cmd = 'd';
         }
     }
-    else if (c==1001) { 
-        if (cy < num_lines-1) { 
-            cy++; 
-            cx = is_valid_line(cy) ? 
-                 (cx > strlen(lines[cy]) ? strlen(lines[cy]) : cx) : 0;
+    else if (c=='o') {
+        if (cy >= 0 && cy < num_lines) {
+            insert_line(cy + 1);
+            cy++;
+            cx = 0;
+            mode = INSERT;
         }
+        last_normal_cmd = 0;
     }
-    else if (c==1002) { 
-        if (is_valid_line(cy) && cx < strlen(lines[cy])) cx++; 
+    else if (c=='a') {
+        if (is_valid_line(cy)) {
+            int len = (int)strlen(lines[cy]);
+            if (cx < len) cx++;
+            mode = INSERT;
+        }
+        last_normal_cmd = 0;
     }
-    else if (c==1003) { if (cx>0) cx--; }
-    else if (c==1004) { 
-        if (is_valid_line(cy) && cx < (int)strlen(lines[cy])) 
-            delete_char(cy, cx);
+    else if (c=='i') {
+        mode = INSERT;
+        last_normal_cmd = 0;
     }
-    else if (c=='i') { mode=INSERT; }
+    else {
+        last_normal_cmd = 0;
+    }
 }
 
 void handle_command() {
@@ -337,7 +420,6 @@ void handle_command() {
     get_window_size(&rows,&cols);
 
     char cmd[256]; // Increased buffer size to handle filename
-    int i=0;
 
     // move to last row and show colon
     char buf[32];
@@ -368,12 +450,14 @@ void handle_command() {
     else if (strcmp(command,"w")==0) {
         if (filename[0] != '\0') {
             strncpy(current_filename, filename, sizeof(current_filename)-1);
+            current_filename[sizeof(current_filename)-1] = '\0';
         }
         save_file(current_filename);
     }
     else if (strcmp(command,"wq")==0) { 
         if (filename[0] != '\0') {
             strncpy(current_filename, filename, sizeof(current_filename)-1);
+            current_filename[sizeof(current_filename)-1] = '\0';
         }
         save_file(current_filename);
         exit(0);

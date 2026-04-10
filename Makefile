@@ -27,7 +27,7 @@ $(OBJ_DIR):
 	mkdir -p $(OBJ_DIR)
 
 # Linking
-$(BINARY): $(OBJECTS) $(BIN_DIR)
+$(BINARY): $(OBJECTS)
 	$(CC) $(LDFLAGS) -o $(BINARY) $(OBJECTS) $(LDLIBS)
 
 # Compilation rules
@@ -42,7 +42,7 @@ $(OBJ_DIR)/aux.o: $(SRC_DIR)/aux.c $(SRC_DIR)/aux.h $(OBJ_DIR)
 
 # Cleaning targets
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -rf $(OBJ_DIR) $(BINARY)
 
 
 # Declare phony targets

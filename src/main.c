@@ -1,18 +1,19 @@
-#include <getopt.h>
+#define _POSIX_C_SOURCE 200112L
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 #include "jed.h"
 #include "aux.h"
 
 int main(int argc, char **argv) 
 {
     int opt;
-    static struct option longopts[] = {
-        {"help",    no_argument, 0, 'h'},
-        {"version", no_argument, 0, 'v'},
-        {0,0,0,0}
-    };
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) { help(); return 0; }
+        if (strcmp(argv[i], "--version") == 0) { ver(); return 0; }
+    }
 
-    while ((opt = getopt_long(argc, argv, "hv", longopts, NULL)) != -1) {
+    while ((opt = getopt(argc, argv, "hv")) != -1) {
         switch (opt) {
             case 'h': help(); return 0;
             case 'v': ver(); return 0;
