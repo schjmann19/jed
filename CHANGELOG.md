@@ -1,6 +1,16 @@
 # Changelog
 All notable changes to this project will be documented in this file.
 
+
+## [0.2.1]
+### Added
+- `w`, `b`, `e` normal-mode word motions
+- `yy` yanks the current line into unnamed clipboard
+- `p` pastes the yanked line below the cursor
+- `dd` deletes the current line
+- `:e <filename>` opens another file to edit
+
+
 ## [0.2.0]
 ### Added
 - Vi-like normal-mode commands: `h`, `j`, `k`, `l` for movement, `0` and `$` for line navigation, `x` for delete character, `dd` for delete line, `o` for open line below, `a` for append after cursor

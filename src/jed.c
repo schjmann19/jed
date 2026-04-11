@@ -27,6 +27,96 @@ char current_filename[256] = "out.txt";
 /* Terminal settings */
 struct termios orig_termios;
 static int raw_mode_initialized = 0;
+static char *clipboard = NULL;
+
+static int is_word_char(char c) {
+    return c != ' ' && c != '\t' && c != '\0';
+}
+
+static void set_clipboard(const char *text) {
+    free(clipboard);
+    if (!text) {
+        clipboard = NULL;
+        return;
+    }
+    size_t len = strlen(text) + 1;
+    clipboard = malloc(len);
+    if (!clipboard) die("malloc");
+    memcpy(clipboard, text, len);
+}
+
+static void move_to_next_word(void) {
+    if (!is_valid_line(cy)) return;
+    int line = cy;
+    int col = cx;
+    int len = (int)strlen(lines[line]);
+
+    if (col < len && is_word_char(lines[line][col])) {
+        while (col < len && is_word_char(lines[line][col])) col++;
+    }
+    while (line < num_lines) {
+        len = (int)strlen(lines[line]);
+        while (col < len && !is_word_char(lines[line][col])) col++;
+        if (col < len) break;
+        line++;
+        col = 0;
+    }
+    if (line < num_lines) {
+        cy = line;
+        cx = col;
+    }
+}
+
+static void move_to_end_word(void) {
+    if (!is_valid_line(cy)) return;
+    int line = cy;
+    int col = cx;
+    int len = (int)strlen(lines[line]);
+
+    if (col >= len) {
+        if (line >= num_lines-1) return;
+        line++;
+        col = 0;
+        len = (int)strlen(lines[line]);
+    }
+    while (col < len && !is_word_char(lines[line][col])) col++;
+    while (line < num_lines) {
+        while (col < len && is_word_char(lines[line][col])) col++;
+        if (col > 0) break;
+        line++;
+        col = 0;
+        len = (line < num_lines) ? (int)strlen(lines[line]) : 0;
+    }
+    if (line < num_lines) {
+        cy = line;
+        cx = col > 0 ? col - 1 : 0;
+    }
+}
+
+static void move_to_prev_word(void) {
+    if (!is_valid_line(cy)) return;
+    int line = cy;
+    int col = cx;
+    if (col == 0) {
+        if (line == 0) return;
+        line--;
+        col = (int)strlen(lines[line]);
+    } else {
+        col--;
+    }
+    while (line >= 0) {
+        while (col > 0 && !is_word_char(lines[line][col])) col--;
+        if (is_word_char(lines[line][col])) {
+            while (col > 0 && is_word_char(lines[line][col-1])) col--;
+            cy = line;
+            cx = col;
+            return;
+        }
+        if (line == 0) break;
+        line--;
+        col = (int)strlen(lines[line]);
+    }
+}
 
 // Move free_lines implementation here, before it's first used
 void free_lines() {
@@ -35,6 +125,8 @@ void free_lines() {
         lines[i] = NULL;
     }
     num_lines = 0;
+    free(clipboard);
+    clipboard = NULL;
 }
 
 /* ================= Terminal Handling ================= */
@@ -103,11 +195,11 @@ void open_file(const char *filename) {
     // Free existing lines first
     free_lines();
 
-    FILE *f = fopen(filename, "r");
-    if (!f) return;
-
     strncpy(current_filename, filename, sizeof(current_filename)-1);
     current_filename[sizeof(current_filename)-1] = '\0';
+
+    FILE *f = fopen(filename, "r");
+    if (!f) return;
 
     char buffer[MAX_COLS];
     while (fgets(buffer, sizeof(buffer), f) && num_lines < MAX_LINES) {
@@ -389,6 +481,38 @@ void handle_normal(int c) {
             last_normal_cmd = 'd';
         }
     }
+    else if (c=='y') {
+        if (last_normal_cmd == 'y') {
+            if (is_valid_line(cy)) set_clipboard(lines[cy]);
+            last_normal_cmd = 0;
+        } else {
+            last_normal_cmd = 'y';
+        }
+    }
+    else if (c=='p') {
+        if (clipboard && cy >= 0 && cy < num_lines) {
+            insert_line(cy + 1);
+            if (is_valid_line(cy+1)) {
+                strncpy(lines[cy+1], clipboard, MAX_COLS-1);
+                lines[cy+1][MAX_COLS-1] = '\0';
+            }
+            cy++;
+            cx = 0;
+        }
+        last_normal_cmd = 0;
+    }
+    else if (c=='w') {
+        move_to_next_word();
+        last_normal_cmd = 0;
+    }
+    else if (c=='b') {
+        move_to_prev_word();
+        last_normal_cmd = 0;
+    }
+    else if (c=='e') {
+        move_to_end_word();
+        last_normal_cmd = 0;
+    }
     else if (c=='o') {
         if (cy >= 0 && cy < num_lines) {
             insert_line(cy + 1);
@@ -461,6 +585,12 @@ void handle_command() {
         }
         save_file(current_filename);
         exit(0);
+    }
+    else if (strcmp(command,"e")==0) {
+        if (filename[0] != '\0') {
+            open_file(filename);
+            if (num_lines == 0) insert_line(0);
+        }
     }
 
     mode = NORMAL;
