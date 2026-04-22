@@ -1,5 +1,9 @@
 # jed (J EDitor)
-(overly) basic bare-bones text editor with vim-like write and quit
+basic bare-bones text editor with vim-like write and quit
 
-!!! no more questionable #include practices, have a makefile
-better innit?
+## Features:
+- Search
+- Undo
+- Normal mode word motions
+- yank + paste; delete line
+- h j k l + arrows movement
