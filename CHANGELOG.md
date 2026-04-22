@@ -2,6 +2,21 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.4.0] - 2026-04-22
+### Added
+- Operator-motion commands: `dw`, `yw`, `cw` for delete/yank/change word
+- Repeat counts for commands: `3dd`, `5w`, etc.
+- Line-oriented paste with `P` (paste above current line)
+- Enhanced operator-motion support for `dd`, `yy`, `cc` line operations
+
+### Fixed
+- Improved operator-motion execution with proper cursor positioning
+- Better handling of line operations vs character operations
+
+### Changed
+- Enhanced normal mode with full operator-motion support
+
+
 ## [0.3.0] - 2026-04-22
 ### Added
 - Search functionality with `/` command and `n`/`N` for next/previous matches

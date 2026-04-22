@@ -32,6 +32,12 @@ int search_direction = 1; /* 1 = forward, -1 = backward */
 UndoEntry undo_stack[UNDO_STACK_SIZE];
 int undo_top = -1;
 
+/* Operator-motion state */
+Operation pending_op = OP_NONE;
+int op_start_line = -1;
+int op_start_col = -1;
+int repeat_count = 0;
+
 /* Terminal settings */
 struct termios orig_termios;
 static int raw_mode_initialized = 0;
@@ -241,6 +247,84 @@ void undo(void) {
     free(entry->old_text);
     free(entry->new_text);
     undo_top--;
+}
+
+// ================= Operator-motion =================
+void execute_operation(Operation op, int start_line, int start_col, int end_line, int end_col) {
+    if (op == OP_NONE) return;
+    
+    // Check if this is a line operation (start_col == 0 and end_col == line length)
+    int is_line_op = (start_col == 0 && is_valid_line(start_line) && 
+                     end_col == (int)strlen(lines[start_line]));
+    
+    if (start_line == end_line && !is_line_op) {
+        // Single line operation (partial line)
+        if (!is_valid_line(start_line)) return;
+        
+        char *line = lines[start_line];
+        int len = (int)strlen(line);
+        
+        if (op == OP_DELETE || op == OP_CHANGE) {
+            // Delete from start_col to end_col
+            if (start_col < len && end_col >= start_col) {
+                int delete_len = end_col - start_col + 1;
+                if (delete_len > len - start_col) delete_len = len - start_col;
+                
+                // Shift characters left
+                for (int i = start_col; i < len - delete_len; i++) {
+                    line[i] = line[i + delete_len];
+                }
+                line[len - delete_len] = '\0';
+                
+                // Adjust cursor
+                if (cx > start_col) {
+                    cx = start_col;
+                }
+            }
+        } else if (op == OP_YANK) {
+            // Yank from start_col to end_col
+            if (start_col < len && end_col >= start_col) {
+                int yank_len = end_col - start_col + 1;
+                if (yank_len > len - start_col) yank_len = len - start_col;
+                
+                free(clipboard);
+                clipboard = malloc(yank_len + 1);
+                if (clipboard) {
+                    memcpy(clipboard, line + start_col, yank_len);
+                    clipboard[yank_len] = '\0';
+                }
+            }
+        }
+        
+        if (op == OP_CHANGE) {
+            mode = INSERT;
+        }
+    } else {
+        // Multi-line operation or full line operation
+        if (op == OP_DELETE) {
+            // Delete lines from start_line to end_line
+            for (int i = end_line; i >= start_line; i--) {
+                delete_line(i);
+            }
+            if (cy >= num_lines) cy = num_lines - 1;
+            if (cy < 0) cy = 0;
+            cx = 0; // Move cursor to start of line
+        } else if (op == OP_YANK) {
+            // Yank the full lines
+            if (is_valid_line(start_line)) {
+                set_clipboard(lines[start_line]);
+            }
+        } else if (op == OP_CHANGE) {
+            // For change line, delete the line and enter insert mode
+            if (is_valid_line(start_line)) {
+                delete_line(start_line);
+                if (cy >= num_lines) cy = num_lines - 1;
+                if (cy < 0) cy = 0;
+                cx = 0;
+                mode = INSERT;
+            }
+        }
+    }
 }
 
 // Move free_lines implementation here, before it's first used
@@ -575,126 +659,248 @@ void handle_insert(int c) {
 }
 
 void handle_normal(int c) {
-    if (c==':') { mode = COMMAND; last_normal_cmd = 0; return; }
-    else if (c=='/') { mode = SEARCH; search_direction = 1; last_normal_cmd = 0; return; }
+    // Handle pending operator first
+    if (pending_op != OP_NONE) {
+        int end_line = cy;
+        int end_col = cx;
+        
+        // Check for line operations (dd, yy, cc)
+        if ((pending_op == OP_DELETE && c == 'd') ||
+            (pending_op == OP_YANK && c == 'y') ||
+            (pending_op == OP_CHANGE && c == 'c')) {
+            // Line operation
+            end_line = cy;
+            end_col = (int)strlen(lines[cy]);
+        } else {
+            // Handle motion after operator
+            if (c == 'w') {
+                move_to_next_word();
+                end_line = cy;
+                end_col = cx - 1; // Include the character we're on
+            } else if (c == 'b') {
+                move_to_prev_word();
+                end_line = cy;
+                end_col = cx;
+            } else if (c == 'e') {
+                move_to_end_word();
+                end_line = cy;
+                end_col = cx;
+            } else if (c == 'h' || c == 1003) {
+                if (cx > 0) cx--;
+                end_col = cx;
+            } else if (c == 'l' || c == 1002) {
+                if (is_valid_line(cy)) {
+                    int len = (int)strlen(lines[cy]);
+                    if (cx < len - 1) cx++;
+                }
+                end_col = cx;
+            } else if (c == '$') {
+                if (is_valid_line(cy)) cx = (int)strlen(lines[cy]);
+                end_col = cx;
+            } else if (c == '0') {
+                cx = 0;
+                end_col = cx;
+            } else {
+                // Invalid motion, cancel operation
+                pending_op = OP_NONE;
+                return;
+            }
+        }
+        
+        // Execute the operation
+        execute_operation(pending_op, op_start_line, op_start_col, end_line, end_col);
+        pending_op = OP_NONE;
+        return;
+    }
+    
+    // Handle repeat count
+    if (c >= '0' && c <= '9') {
+        repeat_count = repeat_count * 10 + (c - '0');
+        return;
+    }
+    
+    // Apply repeat count (default to 1 if none specified)
+    int count = (repeat_count > 0) ? repeat_count : 1;
+    repeat_count = 0;
+    
+    // Handle commands
+    if (c==':') { 
+        mode = COMMAND; 
+        return; 
+    }
+    else if (c=='/') { 
+        mode = SEARCH; 
+        search_direction = 1; 
+        return; 
+    }
     else if (c=='h' || c==1003) {
-        if (cx > 0) cx--;
-        last_normal_cmd = 0;
+        for (int i = 0; i < count; i++) {
+            if (cx > 0) cx--;
+        }
     }
     else if (c=='j' || c==1001) {
-        if (cy < num_lines-1) {
-            cy++;
-            if (is_valid_line(cy)) {
-                int len = (int)strlen(lines[cy]);
-                if (cx > len) cx = len;
-            } else {
-                cx = 0;
+        for (int i = 0; i < count; i++) {
+            if (cy < num_lines-1) {
+                cy++;
+                if (is_valid_line(cy)) {
+                    int len = (int)strlen(lines[cy]);
+                    if (cx > len) cx = len;
+                } else {
+                    cx = 0;
+                }
             }
         }
-        last_normal_cmd = 0;
     }
     else if (c=='k' || c==1000) {
-        if (cy > 0) {
-            cy--;
-            if (is_valid_line(cy)) {
-                int len = (int)strlen(lines[cy]);
-                if (cx > len) cx = len;
-            } else {
-                cx = 0;
+        for (int i = 0; i < count; i++) {
+            if (cy > 0) {
+                cy--;
+                if (is_valid_line(cy)) {
+                    int len = (int)strlen(lines[cy]);
+                    if (cx > len) cx = len;
+                } else {
+                    cx = 0;
+                }
             }
         }
-        last_normal_cmd = 0;
     }
     else if (c=='l' || c==1002) {
-        if (is_valid_line(cy)) {
-            int len = (int)strlen(lines[cy]);
-            if (cx < len) cx++;
+        for (int i = 0; i < count; i++) {
+            if (is_valid_line(cy)) {
+                int len = (int)strlen(lines[cy]);
+                if (cx < len) cx++;
+            }
         }
-        last_normal_cmd = 0;
     }
     else if (c=='0') {
         cx = 0;
-        last_normal_cmd = 0;
     }
     else if (c=='$') {
         if (is_valid_line(cy)) cx = (int)strlen(lines[cy]);
-        last_normal_cmd = 0;
     }
     else if (c=='x') {
-        if (is_valid_line(cy)) {
-            int len = (int)strlen(lines[cy]);
-            if (cx < len) delete_char(cy, cx);
+        for (int i = 0; i < count; i++) {
+            if (is_valid_line(cy)) {
+                int len = (int)strlen(lines[cy]);
+                if (cx < len) delete_char(cy, cx);
+            }
         }
-        last_normal_cmd = 0;
     }
     else if (c=='d') {
-        if (last_normal_cmd == 'd') {
-            delete_line(cy);
-            last_normal_cmd = 0;
+        if (count == 1) {
+            // Start delete operation
+            pending_op = OP_DELETE;
+            op_start_line = cy;
+            op_start_col = cx;
         } else {
-            last_normal_cmd = 'd';
+            // Multi-line delete (e.g., 3dd)
+            for (int i = 0; i < count && cy < num_lines; i++) {
+                delete_line(cy);
+            }
+            if (cy >= num_lines) cy = num_lines - 1;
+            if (cy < 0) cy = 0;
         }
     }
     else if (c=='y') {
-        if (last_normal_cmd == 'y') {
-            if (is_valid_line(cy)) set_clipboard(lines[cy]);
-            last_normal_cmd = 0;
+        if (count == 1) {
+            // Start yank operation
+            pending_op = OP_YANK;
+            op_start_line = cy;
+            op_start_col = cx;
         } else {
-            last_normal_cmd = 'y';
+            // Multi-line yank (e.g., 3yy)
+            if (is_valid_line(cy)) {
+                set_clipboard(lines[cy]);
+            }
+        }
+    }
+    else if (c=='c') {
+        if (count == 1) {
+            // Start change operation
+            pending_op = OP_CHANGE;
+            op_start_line = cy;
+            op_start_col = cx;
+        } else {
+            // For now, treat as single line change
+            pending_op = OP_CHANGE;
+            op_start_line = cy;
+            op_start_col = cx;
         }
     }
     else if (c=='p') {
-        if (clipboard && cy >= 0 && cy < num_lines) {
-            insert_line(cy + 1);
-            if (is_valid_line(cy+1)) {
-                strncpy(lines[cy+1], clipboard, MAX_COLS-1);
-                lines[cy+1][MAX_COLS-1] = '\0';
+        if (clipboard) {
+            for (int i = 0; i < count; i++) {
+                insert_line(cy + 1);
+                if (is_valid_line(cy+1)) {
+                    strncpy(lines[cy+1], clipboard, MAX_COLS-1);
+                    lines[cy+1][MAX_COLS-1] = '\0';
+                }
+                cy++;
+                cx = 0;
             }
-            cy++;
-            cx = 0;
         }
-        last_normal_cmd = 0;
+    }
+    else if (c=='P') {
+        if (clipboard) {
+            for (int i = 0; i < count; i++) {
+                insert_line(cy);
+                if (is_valid_line(cy)) {
+                    strncpy(lines[cy], clipboard, MAX_COLS-1);
+                    lines[cy][MAX_COLS-1] = '\0';
+                }
+                cx = 0;
+            }
+        }
     }
     else if (c=='w') {
-        move_to_next_word();
-        last_normal_cmd = 0;
+        for (int i = 0; i < count; i++) {
+            move_to_next_word();
+        }
     }
     else if (c=='b') {
-        move_to_prev_word();
-        last_normal_cmd = 0;
+        for (int i = 0; i < count; i++) {
+            move_to_prev_word();
+        }
     }
     else if (c=='e') {
-        move_to_end_word();
-        last_normal_cmd = 0;
+        for (int i = 0; i < count; i++) {
+            move_to_end_word();
+        }
     }
     else if (c=='n') {
-        if (search_direction == 1) {
-            search_forward(last_search);
-        } else {
-            search_backward(last_search);
+        for (int i = 0; i < count; i++) {
+            if (search_direction == 1) {
+                search_forward(last_search);
+            } else {
+                search_backward(last_search);
+            }
         }
-        last_normal_cmd = 0;
     }
     else if (c=='N') {
-        if (search_direction == 1) {
-            search_backward(last_search);
-        } else {
-            search_forward(last_search);
+        for (int i = 0; i < count; i++) {
+            if (search_direction == 1) {
+                search_backward(last_search);
+            } else {
+                search_forward(last_search);
+            }
         }
-        last_normal_cmd = 0;
     }
     else if (c=='u') {
-        undo();
-        last_normal_cmd = 0;
+        for (int i = 0; i < count; i++) {
+            undo();
+        }
     }
     else if (c=='o') {
-        if (cy >= 0 && cy < num_lines) {
-            insert_line(cy + 1);
-            cy++;
-            cx = 0;
-            mode = INSERT;
+        for (int i = 0; i < count; i++) {
+            if (cy >= 0 && cy < num_lines) {
+                insert_line(cy + 1);
+                cy++;
+                cx = 0;
+                mode = INSERT;
+                // Only do first one, then break
+                break;
+            }
         }
-        last_normal_cmd = 0;
     }
     else if (c=='a') {
         if (is_valid_line(cy)) {
@@ -702,14 +908,9 @@ void handle_normal(int c) {
             if (cx < len) cx++;
             mode = INSERT;
         }
-        last_normal_cmd = 0;
     }
     else if (c=='i') {
         mode = INSERT;
-        last_normal_cmd = 0;
-    }
-    else {
-        last_normal_cmd = 0;
     }
 }
 

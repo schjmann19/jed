@@ -11,6 +11,9 @@
 /* Editor modes */
 typedef enum { NORMAL, INSERT, COMMAND, SEARCH } Mode;
 
+/* Operations for operator-motion */
+typedef enum { OP_NONE, OP_DELETE, OP_YANK, OP_CHANGE } Operation;
+
 /* Undo entry */
 typedef struct {
     int line;
@@ -64,6 +67,9 @@ void search_backward(const char *pattern);
 /* Undo */
 void push_undo(int line, const char *old_text, const char *new_text);
 void undo(void);
+
+/* Operator-motion */
+void execute_operation(Operation op, int start_line, int start_col, int end_line, int end_col);
 
 /* Screen rendering */
 void get_window_size(int *rows, int *cols);
