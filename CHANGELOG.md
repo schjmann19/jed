@@ -2,6 +2,20 @@
 All notable changes to this project will be documented in this file.
 
 
+## [0.3.0] - 2026-04-22
+### Added
+- Search functionality with `/` command and `n`/`N` for next/previous matches
+- Undo functionality with `u` key (single level undo)
+- SEARCH mode with proper status line display
+
+### Fixed
+- Improved cursor positioning and bounds checking
+- Better memory management for undo stack and clipboard
+
+### Changed
+- Enhanced normal mode with additional vi-like commands
+
+
 ## [0.2.1]
 ### Added
 - `w`, `b`, `e` normal-mode word motions

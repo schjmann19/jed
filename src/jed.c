@@ -24,6 +24,14 @@ int last_normal_cmd = 0;
 /* Current file name */
 char current_filename[256] = "out.txt";
 
+/* Search state */
+char last_search[256] = "";
+int search_direction = 1; /* 1 = forward, -1 = backward */
+
+/* Undo stack */
+UndoEntry undo_stack[UNDO_STACK_SIZE];
+int undo_top = -1;
+
 /* Terminal settings */
 struct termios orig_termios;
 static int raw_mode_initialized = 0;
@@ -118,6 +126,123 @@ static void move_to_prev_word(void) {
     }
 }
 
+// ================= Search =================
+void search_forward(const char *pattern) {
+    if (!pattern || !*pattern) return;
+    
+    int start_line = cy;
+    int start_col = cx + 1; // Start after current position
+    
+    for (int line = start_line; line < num_lines; line++) {
+        if (!is_valid_line(line)) continue;
+        char *text = lines[line];
+        int col_start = (line == start_line) ? start_col : 0;
+        
+        char *found = strstr(text + col_start, pattern);
+        if (found) {
+            cy = line;
+            cx = (found - text);
+            return;
+        }
+    }
+    
+    // Wrap around to beginning
+    for (int line = 0; line <= start_line; line++) {
+        if (!is_valid_line(line)) continue;
+        char *text = lines[line];
+        int col_end = (line == start_line) ? start_col : (int)strlen(text);
+        
+        char *found = strstr(text, pattern);
+        if (found && (found - text) < col_end) {
+            cy = line;
+            cx = (found - text);
+            return;
+        }
+    }
+}
+
+void search_backward(const char *pattern) {
+    if (!pattern || !*pattern) return;
+    
+    int start_line = cy;
+    int start_col = cx - 1; // Start before current position
+    
+    for (int line = start_line; line >= 0; line--) {
+        if (!is_valid_line(line)) continue;
+        char *text = lines[line];
+        int col_end = (line == start_line) ? start_col : (int)strlen(text) - 1;
+        
+        for (int col = col_end; col >= 0; col--) {
+            if (strncmp(text + col, pattern, strlen(pattern)) == 0) {
+                cy = line;
+                cx = col;
+                return;
+            }
+        }
+    }
+    
+    // Wrap around to end
+    for (int line = num_lines - 1; line >= start_line; line--) {
+        if (!is_valid_line(line)) continue;
+        char *text = lines[line];
+        int col_start = (line == start_line) ? start_col : 0;
+        
+        for (int col = (int)strlen(text) - 1; col > col_start; col--) {
+            if (strncmp(text + col, pattern, strlen(pattern)) == 0) {
+                cy = line;
+                cx = col;
+                return;
+            }
+        }
+    }
+}
+
+// ================= Undo =================
+void push_undo(int line, const char *old_text, const char *new_text) {
+    if (undo_top >= UNDO_STACK_SIZE - 1) return; // Stack full
+    
+    undo_top++;
+    undo_stack[undo_top].line = line;
+    
+    if (old_text) {
+        size_t len = strlen(old_text) + 1;
+        undo_stack[undo_top].old_text = malloc(len);
+        if (undo_stack[undo_top].old_text) {
+            memcpy(undo_stack[undo_top].old_text, old_text, len);
+        }
+    } else {
+        undo_stack[undo_top].old_text = NULL;
+    }
+    
+    if (new_text) {
+        size_t len = strlen(new_text) + 1;
+        undo_stack[undo_top].new_text = malloc(len);
+        if (undo_stack[undo_top].new_text) {
+            memcpy(undo_stack[undo_top].new_text, new_text, len);
+        }
+    } else {
+        undo_stack[undo_top].new_text = NULL;
+    }
+}
+
+void undo(void) {
+    if (undo_top < 0) return;
+    
+    UndoEntry *entry = &undo_stack[undo_top];
+    if (entry->old_text) {
+        free(lines[entry->line]);
+        lines[entry->line] = entry->old_text;
+        entry->old_text = NULL;
+    } else if (entry->new_text) {
+        // This was a line insertion, need to delete it
+        delete_line(entry->line);
+    }
+    
+    free(entry->old_text);
+    free(entry->new_text);
+    undo_top--;
+}
+
 // Move free_lines implementation here, before it's first used
 void free_lines() {
     for (int i = 0; i < num_lines; i++) {
@@ -127,6 +252,13 @@ void free_lines() {
     num_lines = 0;
     free(clipboard);
     clipboard = NULL;
+    
+    // Clean up undo stack
+    for (int i = 0; i <= undo_top; i++) {
+        free(undo_stack[i].old_text);
+        free(undo_stack[i].new_text);
+    }
+    undo_top = -1;
 }
 
 /* ================= Terminal Handling ================= */
@@ -240,6 +372,9 @@ void insert_char(int line, int col, char c) {
     int len = strlen(lines[line]);
     if (len >= MAX_COLS - 1) return;  // Ensure space for new char + null terminator
     
+    // Push undo entry
+    push_undo(line, lines[line], NULL);
+    
     // Move characters only if we're not at the end
     if (col <= len) {
         for (int i = len; i >= col; i--) {
@@ -261,11 +396,19 @@ void delete_char(int line, int col) {
     if (!is_valid_line(line)) return;
     int len = strlen(lines[line]);
     if (col >= len) return;
+    
+    // Push undo entry
+    push_undo(line, lines[line], NULL);
+    
     for (int i=col; i<len; i++) lines[line][i] = lines[line][i+1];
 }
 
 void insert_line(int index) {
     if (num_lines >= MAX_LINES) return;
+    
+    // Push undo entry for line insertion
+    push_undo(index, NULL, "");
+    
     for (int i=num_lines; i>index; i--) lines[i] = lines[i-1];
     lines[index] = calloc(MAX_COLS, sizeof(char));
     if (!lines[index]) die("calloc");
@@ -274,6 +417,10 @@ void insert_line(int index) {
 
 void delete_line(int index) {
     if (!is_valid_line(index)) return;
+    
+    // Push undo entry
+    push_undo(index, lines[index], NULL);
+    
     free(lines[index]);
     for (int i=index; i<num_lines-1; i++) lines[i] = lines[i+1];
     num_lines--;
@@ -345,8 +492,14 @@ void refresh_screen() {
 
     // status line second to last
     char status[512];
+    const char *mode_str;
+    if (mode == INSERT) mode_str = "INSERT";
+    else if (mode == COMMAND) mode_str = "COMMAND";
+    else if (mode == SEARCH) mode_str = "SEARCH";
+    else mode_str = "NORMAL";
+    
     snprintf(status, sizeof(status), "-- %s --   %s",
-             (mode==INSERT)?"INSERT":(mode==COMMAND)?"COMMAND":"NORMAL",
+             mode_str,
              current_filename);
 
     char buf[32];
@@ -423,6 +576,7 @@ void handle_insert(int c) {
 
 void handle_normal(int c) {
     if (c==':') { mode = COMMAND; last_normal_cmd = 0; return; }
+    else if (c=='/') { mode = SEARCH; search_direction = 1; last_normal_cmd = 0; return; }
     else if (c=='h' || c==1003) {
         if (cx > 0) cx--;
         last_normal_cmd = 0;
@@ -513,6 +667,26 @@ void handle_normal(int c) {
         move_to_end_word();
         last_normal_cmd = 0;
     }
+    else if (c=='n') {
+        if (search_direction == 1) {
+            search_forward(last_search);
+        } else {
+            search_backward(last_search);
+        }
+        last_normal_cmd = 0;
+    }
+    else if (c=='N') {
+        if (search_direction == 1) {
+            search_backward(last_search);
+        } else {
+            search_forward(last_search);
+        }
+        last_normal_cmd = 0;
+    }
+    else if (c=='u') {
+        undo();
+        last_normal_cmd = 0;
+    }
     else if (c=='o') {
         if (cy >= 0 && cy < num_lines) {
             insert_line(cy + 1);
@@ -590,6 +764,47 @@ void handle_command() {
         if (filename[0] != '\0') {
             open_file(filename);
             if (num_lines == 0) insert_line(0);
+        }
+    }
+
+    mode = NORMAL;
+}
+
+void handle_search() {
+    int rows, cols;
+    get_window_size(&rows,&cols);
+
+    char search_str[256];
+
+    // move to last row and show search prompt
+    char buf[32];
+    snprintf(buf,sizeof(buf),"\x1b[%d;1H",rows);
+    write(STDOUT_FILENO,buf,strlen(buf));
+    write(STDOUT_FILENO, search_direction == 1 ? "/" : "?", 1);
+
+    // temporarily enable canonical + echo
+    struct termios raw, orig=orig_termios;
+    raw=orig;
+    raw.c_lflag |= (ICANON | ECHO);
+    tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+
+    if (fgets(search_str,sizeof(search_str),stdin)==NULL) search_str[0]='\0';
+
+    size_t len = strlen(search_str);
+    if (len>0 && search_str[len-1]=='\n') search_str[len-1]='\0';
+
+    // restore raw
+    enable_raw_mode();
+
+    // Perform search
+    if (search_str[0] != '\0') {
+        strncpy(last_search, search_str, sizeof(last_search)-1);
+        last_search[sizeof(last_search)-1] = '\0';
+        
+        if (search_direction == 1) {
+            search_forward(search_str);
+        } else {
+            search_backward(search_str);
         }
     }
 

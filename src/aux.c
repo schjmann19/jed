@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include "aux.h"
 
-#define VERSION "0.2.0"
+#define VERSION "0.3.0"
 
 void bad_arg(void) {
     fprintf(stderr, "bad argument\n use -h or --help for help\n");

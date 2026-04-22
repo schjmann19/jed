@@ -5,10 +5,18 @@
 
 #define MAX_LINES 10000
 #define MAX_COLS 1024
+#define UNDO_STACK_SIZE 100
 #define loop for(;;)
 
 /* Editor modes */
-typedef enum { NORMAL, INSERT, COMMAND } Mode;
+typedef enum { NORMAL, INSERT, COMMAND, SEARCH } Mode;
+
+/* Undo entry */
+typedef struct {
+    int line;
+    char *old_text;
+    char *new_text;
+} UndoEntry;
 
 /* Global text storage */
 extern char *lines[MAX_LINES];
@@ -49,6 +57,14 @@ void delete_char(int line, int col);
 void insert_line(int index);
 void delete_line(int index);
 
+/* Search */
+void search_forward(const char *pattern);
+void search_backward(const char *pattern);
+
+/* Undo */
+void push_undo(int line, const char *old_text, const char *new_text);
+void undo(void);
+
 /* Screen rendering */
 void get_window_size(int *rows, int *cols);
 void scroll(void);
@@ -58,5 +74,6 @@ void refresh_screen(void);
 void handle_insert(int c);
 void handle_normal(int c);
 void handle_command(void);
+void handle_search(void);
 
 #endif /* JED_H */

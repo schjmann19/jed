@@ -29,10 +29,11 @@ int main(int argc, char **argv)
     loop {
         // if entering command mode, handle it immediately
         if (mode==COMMAND) { handle_command(); continue; }
+        if (mode==SEARCH) { handle_search(); continue; }
 
         // ensure viewport follows cursor before rendering
         scroll();
-        if (mode!=COMMAND) refresh_screen();
+        if (mode!=COMMAND && mode!=SEARCH) refresh_screen();
 
         int c = read_key();
         if (c==-1) continue;
@@ -40,6 +41,7 @@ int main(int argc, char **argv)
         if (mode==INSERT) handle_insert(c);
         else if (mode==NORMAL) handle_normal(c);
         else if (mode==COMMAND) handle_command();
+        else if (mode==SEARCH) handle_search();
     }
 
     return 0;
